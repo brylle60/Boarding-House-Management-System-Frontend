@@ -23,6 +23,7 @@ import { notificationService, type NotificationItem } from '../../services/notif
 import type { Room } from '../../models/room'
 import { isAvailable, TYPE_LABEL } from '../../models/room'
 import router from "../../router";
+import logo from '@/assets/Logo.png'
 
 const auth = useAuthStore()
 
@@ -764,9 +765,9 @@ onUnmounted(() => {
 
     <!-- ── Navbar (light, picture 1 style) ───────────────────────────────── -->
     <nav class="navbar">
-      <div class="navbar__brand">
-        <span class="navbar__icon">🏠</span>
-        <span class="navbar__name">ResidEase</span>
+      <div class="brand">
+        <img :src="logo" alt="ResidEase" class="logo">
+        <span class="brand-name">ResidEase</span>
       </div>
       <div class="navbar__links">
         <a :class="['navbar__link', activeSection === 'home' ? 'navbar__link--active' : '']"
@@ -1342,9 +1343,9 @@ onUnmounted(() => {
   box-shadow: 0 1px 6px rgba(0,0,0,.06);
   position: sticky; top: 0; z-index: 50;
 }
-.navbar__brand { display: flex; align-items: center; gap: 8px; margin-right: 16px; }
-.navbar__icon { font-size: 20px; }
-.navbar__name { font-size: 17px; font-weight: 800; color: #1f2937; }
+.brand       { display: flex; align-items: center; gap: 12px; }
+.logo        { width: 45px; height: 40px; }
+.brand-name  { font-size: 20px; font-weight: 700; color: #6b7280; }
 .navbar__links { display: flex; gap: 2px; flex: 1; }
 .navbar__link {
   font-size: 14px; font-weight: 500; color: #6b7280;
