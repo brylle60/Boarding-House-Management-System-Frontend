@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import logo from '@/assets/Logo.png'
 import { ref, computed, onMounted, onUnmounted, reactive } from "vue";
 import { useAuthStore } from '../../stores/auth'
 import LeaseCard from '../../components/TenantsUI_Components/LeaseCard.vue'
@@ -58,16 +59,31 @@ const leaseForCard = computed(() => {
   const l = lease.value
   const start = new Date(l.start_date)
   const end   = new Date(l.end_date)
-  const today = new Date()
   const msPerMonth = 1000 * 60 * 60 * 24 * 30.44
   const totalMonths  = l.duration_months || Math.max(1, Math.round((end.getTime() - start.getTime()) / msPerMonth))
-  const monthsCompleted = Math.min(totalMonths, Math.max(0, Math.floor((today.getTime() - start.getTime()) / msPerMonth)))
+
+  // Progress is driven by *paid* months, not elapsed time, so every
+  // successful rent payment visibly bumps the bar. Each CONFIRMED RENT
+  // payment counts as one month — duplicate months are de-duplicated
+  // using a YYYY-MM key derived from the payment's billing period
+  // (or, if missing, its payment_date / created_at).
+  const paidMonthKeys = new Set<string>()
+  for (const p of (payments.value as any[])) {
+    if (p?.status !== 'CONFIRMED') continue
+    if (p?.type   !== 'RENT')       continue
+    const dt = p.period_start
+      ? new Date(p.period_start)
+      : new Date(p.payment_date || p.confirmed_at || p.created_at)
+    if (Number.isNaN(dt.getTime())) continue
+    paidMonthKeys.add(`${dt.getFullYear()}-${dt.getMonth()}`)
+  }
+  const monthsCompleted = Math.min(totalMonths, paidMonthKeys.size)
   const statusMap: Record<string, 'Active' | 'Inactive' | 'Expired'> = {
     ACTIVE: 'Active', EXPIRED: 'Expired', TERMINATED: 'Expired', PENDING: 'Inactive', RENEWED: 'Inactive',
   }
   const roomLabel = room.value
     ? `Room ${room.value.room_number} — ${TYPE_LABEL[room.value.room_type as keyof typeof TYPE_LABEL] ?? room.value.room_type}`
-    : l.room_id?.slice(0, 8) ?? '—'
+    : '—'   // never leak the raw ObjectId — users were reading it as a hash
   return {
     room: roomLabel,
     monthlyRent: l.monthly_rate,
@@ -202,8 +218,19 @@ const filteredRooms = computed(() => {
   if (selectedType.value !== 'All')   list = list.filter(r => r.room_type === selectedType.value)
   if (selectedStatus.value !== 'All') list = list.filter(r => r.status === selectedStatus.value)
   if (searchQuery.value.trim()) {
+    // Free-text search matches the same fields as the Guest landing page
+    // — typing a city, property name, or full address all surface results.
     const q = searchQuery.value.toLowerCase()
-    list = list.filter(r => r.room_number.toLowerCase().includes(q))
+    list = list.filter(r => {
+      const haystack = [
+        r.room_number,
+        r.property_name,
+        r.location,
+        r.address,
+        r.description,
+      ].filter(Boolean).join(' ').toLowerCase()
+      return haystack.includes(q)
+    })
   }
   if (searchPrice.value) {
     const parts = searchPrice.value.split('-').map(Number)
@@ -220,7 +247,10 @@ const filteredRooms = computed(() => {
 
 async function fetchRooms() {
   try {
-    const res = await fetch('/api/rooms/public/vacant')
+    // Explicit `limit=1000` so newly-added rooms always surface in the
+    // tenant home grid. The backend default was 20, which silently
+    // truncated the listing once a manager had more than 20 vacant rooms.
+    const res = await fetch('/api/rooms/public/vacant?limit=1000')
     const json = await res.json()
     rooms.value = Array.isArray(json.data) ? json.data : []
   } catch { rooms.value = [] } finally { roomsLoading.value = false }
@@ -324,10 +354,22 @@ onMounted(async () => {
     if (m.status   === 'fulfilled') maintenanceRequests.value = m.value ?? []
     if (msg.status === 'fulfilled') messages.value            = msg.value ?? []
 
-    // Fetch room details for hero stats and lease card
+    // Fetch room details for the lease card (room type, amenities, etc.).
+    // The hero stats (room number, floor) no longer depend on this call —
+    // they read from `tenant.room_number` / `tenant.floor_level` which the
+    // backend now denormalizes onto `/api/tenants/me`. So if this fetch
+    // fails for any reason, the dashboard still renders the basics.
     const roomId = tenant.value?.room_id || lease.value?.room_id
     if (roomId) {
-      getRoom(roomId).then(r => { room.value = r }).catch(() => {})
+      getRoom(roomId)
+        .then(r => { room.value = r })
+        .catch(err => {
+          // Log instead of swallowing — a 403/404 here usually means the
+          // tenant's `room_id` got out of sync with the actual room (e.g.
+          // the manager unassigned them). The hero stats will still work
+          // via the denormalized fields above.
+          console.warn('[TenantPage] failed to load room details:', err)
+        })
     }
 
     // Load full inbox (all messages, not just unread)
@@ -877,6 +919,7 @@ onUnmounted(() => {
       <Hero
         v-model:search-location="searchQuery"
         v-model:search-price="searchPrice"
+        v-model:search-category="selectedType"
         :available-count="availableCount"
         @search="() => {}"
       />
